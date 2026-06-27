@@ -1,36 +1,32 @@
 import { useState } from "react";
 
-export default function PayloadViewer({
-  payload,
-}) {
-  const [showPayload, setShowPayload] =
-    useState(false);
+export default function PayloadViewer({ payload }) {
+  const [showPayload, setShowPayload] = useState(false);
 
   return (
     <div
       style={{
-        backgroundColor: "white",
+        background: "#fff",
         padding: "20px",
-        borderRadius: "10px",
-        marginBottom: "20px",
-        boxShadow:
-          "0 2px 5px rgba(0,0,0,0.1)",
+        borderRadius: "15px",
+        boxShadow: "0 5px 15px rgba(0,0,0,.1)",
+        height: "100%",
       }}
     >
-      <h2>
+      <h2 style={{ marginBottom: "20px" }}>
         🔐 Payload MQTT
       </h2>
 
       <button
-        onClick={() =>
-          setShowPayload(
-            !showPayload
-          )
-        }
+        onClick={() => setShowPayload(!showPayload)}
         style={{
-          marginTop: "10px",
-          padding: "10px",
+          background: "#2563eb",
+          color: "#fff",
+          border: "none",
+          padding: "12px 20px",
+          borderRadius: "8px",
           cursor: "pointer",
+          fontWeight: "bold",
         }}
       >
         {showPayload
@@ -41,12 +37,13 @@ export default function PayloadViewer({
       {showPayload && (
         <pre
           style={{
-            marginTop: "15px",
-            backgroundColor:
-              "#f4f4f4",
-            padding: "10px",
-            borderRadius: "5px",
+            marginTop: "20px",
+            background: "#f3f4f6",
+            padding: "15px",
+            borderRadius: "10px",
             overflow: "auto",
+            color: "#2563eb",
+            fontWeight: "bold",
           }}
         >
           {payload}

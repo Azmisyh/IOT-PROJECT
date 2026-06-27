@@ -8,6 +8,7 @@ import GasChart from "../components/GasChart";
 import PayloadViewer from "../components/PayloadViewer";
 import MuteAlarmButton from "../components/MuteAlarmButton";
 
+
 import { getGeminiRecommendation } from "../services/geminiService";
 
 export default function Dashboard() {
@@ -227,13 +228,21 @@ export default function Dashboard() {
         <GasChart history={history} />
       </div>
 
-      {/* PAYLOAD MQTT */}
-      <PayloadViewer
-        payload={encryptedPayload}
-      />
+      {/* PAYLOAD MQTT & KONTROL ALARM */}
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "20px",
+    marginTop: "20px",
+    marginBottom: "20px",
+    alignItems: "stretch",
+  }}
+>
+  <PayloadViewer payload={encryptedPayload} />
 
-      {/* MUTE ALARM */}
-      <MuteAlarmButton />
+  <MuteAlarmButton />
+</div>
 
       {/* TABEL RIWAYAT */}
       <div

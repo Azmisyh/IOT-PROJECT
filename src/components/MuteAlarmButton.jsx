@@ -10,39 +10,45 @@ export default function MuteAlarmButton() {
     setMuted(true);
 
     alert(
-      "Perintah MQTT dikirim ke ESP32 untuk mematikan buzzer"
+      "Perintah MQTT berhasil dikirim ke ESP32."
     );
   };
 
   return (
     <div
       style={{
-        backgroundColor: "white",
+        background: "#fff",
         padding: "20px",
-        borderRadius: "10px",
-        marginBottom: "20px",
-        boxShadow:
-          "0 2px 5px rgba(0,0,0,0.1)",
+        borderRadius: "15px",
+        boxShadow: "0 5px 15px rgba(0,0,0,.1)",
+        height: "100%",
       }}
     >
-      <h2>🔊 Kontrol Alarm</h2>
+      <h2 style={{ marginBottom: "20px" }}>
+        🔊 Kontrol Alarm
+      </h2>
 
       <button
         onClick={handleMute}
         disabled={muted}
         style={{
-          marginTop: "10px",
-          backgroundColor:
-            muted ? "gray" : "#dc2626",
-          color: "white",
+          background: muted
+            ? "#9ca3af"
+            : "#dc2626",
+          color: "#fff",
           border: "none",
-          padding: "12px 20px",
-          borderRadius: "5px",
-          cursor: "pointer",
+          padding: "12px 22px",
+          borderRadius: "8px",
+          cursor: muted
+            ? "not-allowed"
+            : "pointer",
+          fontWeight: "bold",
+          width: "100%",
+          fontSize: "16px",
         }}
       >
         {muted
-          ? "Buzzer Dimatikan"
+          ? "✅ Buzzer Dimatikan"
           : "🔇 Matikan Buzzer"}
       </button>
     </div>
