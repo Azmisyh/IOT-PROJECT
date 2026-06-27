@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { io } from "socket.io-client";
 
 import AlertNotification from "../components/AlertNotification";
 import AIAssistant from "../components/AIAssistant";
@@ -11,18 +12,65 @@ import MuteAlarmButton from "../components/MuteAlarmButton";
 
 import { getGeminiRecommendation } from "../services/geminiService";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:3000";
+
+function buildFallbackHistory() {
+  return [
+    { time: "00:00", gas: 180, status: "AMAN" },
+    { time: "00:05", gas: 320, status: "WASPADA" },
+    { time: "00:10", gas: 460, status: "WASPADA" },
+    { time: "00:15", gas: 240, status: "AMAN" },
+  ];
+}
+
+function parsePayload(payload) {
+  if (typeof payload === "object" && payload !== null) {
+    return payload;
+  }
+
+  if (typeof payload === "string") {
+    try {
+      return JSON.parse(payload);
+    } catch {
+      return { value: payload };
+    }
+  }
+
+  return { value: payload };
+}
+
+function mapReadingToDashboard(reading) {
+  const payload = parsePayload(reading?.payload);
+
+  const gasValue = Number(
+    reading?.gasValuePPM ?? payload.gas_ppm ?? payload.kadar_gas ?? payload.gasValue ?? payload.ppm ?? payload.gas ?? payload.value ?? 0
+  );
+
+  const numericGas = Number.isFinite(gasValue) ? gasValue : 0;
+  const isAlarm = reading?.alarmActive === true || payload.alarm === true || payload.status === "alarm" || payload.status === "BAHAYA" || payload.alarmActive === true;
+  const currentStatus = isAlarm ? "BAHAYA" : numericGas >= 400 ? "WASPADA" : "AMAN";
+
+  return {
+    gas: numericGas,
+    status: currentStatus,
+    payload,
+    time: new Date(reading?.createdAt || Date.now()).toLocaleTimeString(),
+  };
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
 
   const [gas, setGas] = useState(150);
   const [status, setStatus] = useState("AMAN");
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(buildFallbackHistory());
+  const [payload, setPayload] = useState("Belum ada payload dari backend");
+  const [connectionStatus, setConnectionStatus] = useState("MENGHUBUNG...");
 
   const [aiRecommendation, setAiRecommendation] =
-    useState("Kondisi ruangan aman.");
-
-  const encryptedPayload =
-    "8fA92KxM7sDf98KjA71LsPwQ2Xz";
+    useState("Memuat rekomendasi AI...");
+  const [aiLoading, setAiLoading] = useState(true);
 
   const handleLogout = () => {
     const confirmLogout = window.confirm(
@@ -35,42 +83,94 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const gasValue = Math.floor(
-        Math.random() * 1000
-      );
+    const socket = io(SOCKET_URL, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+    });
 
-      setGas(gasValue);
+    socket.on("connect", () => {
+      setConnectionStatus("ONLINE");
+    });
 
-      let currentStatus = "";
+    socket.on("disconnect", () => {
+      setConnectionStatus("OFFLINE");
+    });
 
-      if (gasValue < 300) {
-        currentStatus = "AMAN";
-      } else if (gasValue < 600) {
-        currentStatus = "WASPADA";
-      } else {
-        currentStatus = "BAHAYA";
+    socket.on("connect_error", () => {
+      setConnectionStatus("OFFLINE");
+    });
+
+    socket.on("newData", async (data) => {
+      const mapped = mapReadingToDashboard(data);
+      setGas(mapped.gas);
+      setStatus(mapped.status);
+      setPayload(JSON.stringify(mapped.payload, null, 2));
+      setHistory((prev) => [{ time: mapped.time, gas: mapped.gas, status: mapped.status }, ...prev.slice(0, 19)]);
+
+      setAiLoading(true);
+      const recommendation = await getGeminiRecommendation(mapped.status);
+      setAiRecommendation(recommendation);
+      setAiLoading(false);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const [latestRes, historyRes] = await Promise.allSettled([
+          fetch(`${API_BASE_URL}/gas-readings/latest`),
+          fetch(`${API_BASE_URL}/gas-readings?limit=20`),
+        ]);
+
+        const fallbackHistory = buildFallbackHistory();
+        let nextGas = fallbackHistory[fallbackHistory.length - 1].gas;
+        let nextStatus = fallbackHistory[fallbackHistory.length - 1].status;
+        let nextRecommendation = "Memuat rekomendasi AI...";
+        let nextPayload = "Belum ada payload dari backend";
+        let nextHistory = fallbackHistory;
+
+        if (latestRes.status === "fulfilled" && latestRes.value.ok) {
+          const latestReading = await latestRes.value.json();
+          const mappedLatest = mapReadingToDashboard(latestReading);
+
+          nextGas = mappedLatest.gas;
+          nextStatus = mappedLatest.status;
+          nextRecommendation = await getGeminiRecommendation(mappedLatest.status);
+          nextPayload = JSON.stringify(mappedLatest.payload, null, 2);
+        }
+
+        if (historyRes.status === "fulfilled" && historyRes.value.ok) {
+          const recentData = await historyRes.value.json();
+          const mappedHistory = recentData
+            .map((item) => ({
+              time: new Date(item.createdAt || Date.now()).toLocaleTimeString(),
+              gas: Number(item.gasValuePPM ?? 0),
+              status: item.alarmActive ? "BAHAYA" : Number(item.gasValuePPM ?? 0) >= 400 ? "WASPADA" : "AMAN",
+            }))
+            .filter((item) => Number.isFinite(item.gas));
+
+          if (mappedHistory.length > 0) {
+            nextHistory = mappedHistory.slice(0, 20);
+          }
+        }
+
+        setGas(nextGas);
+        setStatus(nextStatus);
+        setAiRecommendation(nextRecommendation);
+        setAiLoading(false);
+        setPayload(nextPayload);
+        setHistory(nextHistory);
+      } catch (error) {
+        console.error("Gagal mengambil data dari backend:", error);
       }
+    };
 
-      setStatus(currentStatus);
-
-      setAiRecommendation(
-        getGeminiRecommendation(
-          currentStatus
-        )
-      );
-
-      const newData = {
-        time: new Date().toLocaleTimeString(),
-        gas: gasValue,
-        status: currentStatus,
-      };
-
-      setHistory((prev) => [
-        newData,
-        ...prev.slice(0, 19),
-      ]);
-    }, 3000);
+    loadData();
+    const interval = setInterval(loadData, 5000);
 
     return () => clearInterval(interval);
   }, []);
@@ -196,10 +296,10 @@ export default function Dashboard() {
 
           <h1
             style={{
-              color: "green",
+              color: connectionStatus === "ONLINE" ? "green" : "#dc2626",
             }}
           >
-            ONLINE
+            {connectionStatus}
           </h1>
         </div>
 
@@ -209,9 +309,9 @@ export default function Dashboard() {
 
       {/* AI GEMINI */}
       <AIAssistant
-        recommendation={
-          aiRecommendation
-        }
+        recommendation={aiRecommendation}
+        loading={aiLoading}
+        status={status}
       />
 
       {/* GRAFIK */}
@@ -239,7 +339,7 @@ export default function Dashboard() {
     alignItems: "stretch",
   }}
 >
-  <PayloadViewer payload={encryptedPayload} />
+  <PayloadViewer payload={payload} />
 
   <MuteAlarmButton />
 </div>
