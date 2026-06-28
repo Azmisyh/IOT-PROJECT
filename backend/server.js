@@ -1,5 +1,6 @@
 require('dotenv').config({ override: true });
 const dns = require('dns');
+const crypto = require('crypto');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -55,6 +56,22 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// Kunci & IV AES-128 (Harus sama dengan ESP32)
+const AES_KEY = '1234567890123456';
+const AES_IV  = '1234567890123456';
+
+function decryptAES(ciphertext) {
+  try {
+    const decipher = crypto.createDecipheriv('aes-128-cbc', Buffer.from(AES_KEY), Buffer.from(AES_IV));
+    let decrypted = decipher.update(ciphertext, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (error) {
+    console.error('[AES Decrypt Error] Gagal mendekripsi payload:', error.message);
+    return null;
+  }
+}
+
 function buildPayloadObject(payload) {
   if (typeof payload === 'object' && payload !== null) {
     return payload;
@@ -62,7 +79,17 @@ function buildPayloadObject(payload) {
 
   if (typeof payload === 'string') {
     try {
-      return JSON.parse(payload);
+      const parsed = JSON.parse(payload);
+      // Jika payload dibungkus ciphertext terenkripsi, dekripsi
+      if (parsed && parsed.ciphertext) {
+        const decryptedStr = decryptAES(parsed.ciphertext);
+        if (decryptedStr) {
+          const decryptedObj = JSON.parse(decryptedStr);
+          decryptedObj.isEncrypted = true; // Flag penanda keamanan sukses
+          return decryptedObj;
+        }
+      }
+      return parsed;
     } catch (error) {
       return { value: payload };
     }
@@ -103,14 +130,72 @@ function getAlarmState(payload, gasValue) {
   return false;
 }
 
-function getGeminiRecommendation(status) {
-  switch ((status || '').toString().toUpperCase()) {
-    case 'BAHAYA':
-      return 'Segera buka ventilasi, matikan sumber api, dan evakuasi area.';
-    case 'WASPADA':
-      return 'Periksa area sekitar sensor dan tingkatkan ventilasi.';
-    default:
-      return 'Kondisi ruangan aman dan terkendali.';
+let lastGeminiStatus = null;
+let lastGeminiRecommendation = '';
+let lastGeminiCallTime = 0;
+
+async function getGeminiRecommendation(status, ppm = 0) {
+  const now = Date.now();
+  const statusUpper = (status || '').toString().toUpperCase();
+
+  // Jika status sama dengan sebelumnya DAN pemanggilan terakhir kurang dari 30 detik lalu,
+  // gunakan rekomendasi cache agar menghemat kuota API Key.
+  if (statusUpper === lastGeminiStatus && lastGeminiRecommendation && (now - lastGeminiCallTime < 30000)) {
+    return lastGeminiRecommendation;
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey.startsWith('YOUR_') || apiKey === 'xxxxxx') {
+    // Fallback static recommendation jika API Key belum dipasang
+    switch (statusUpper) {
+      case 'BAHAYA':
+        return 'Segera buka ventilasi, matikan sumber api, dan evakuasi area. (Mock AI)';
+      case 'WASPADA':
+        return 'Periksa area sekitar sensor dan tingkatkan ventilasi. (Mock AI)';
+      default:
+        return 'Kondisi ruangan aman dan terkendali. (Mock AI)';
+    }
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: `Anda adalah AI pakar keselamatan sistem IoT pendeteksi kebocoran gas. Sensor gas MQ-2 mendeteksi kadar gas ${ppm} ppm dengan status keselamatan "${status}". Berikan satu kalimat rekomendasi singkat, padat, dan langsung ke tujuan (tindakan praktis apa yang harus dilakukan).`
+                }
+              ]
+            }
+          ]
+        })
+      }
+    );
+
+    const data = await response.json();
+    if (data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
+      const recText = data.candidates[0].content.parts[0].text.trim();
+      lastGeminiStatus = statusUpper;
+      lastGeminiRecommendation = recText;
+      lastGeminiCallTime = now;
+      return recText;
+    }
+    console.error('[Gemini API Raw Response]', JSON.stringify(data));
+    throw new Error('Respons struktur Gemini API tidak valid');
+  } catch (error) {
+    console.error('[Gemini API Error]', error.message);
+    // Jika limit tercapai (429) dan ada cache lama, gunakan cache lama
+    if (lastGeminiRecommendation) {
+      return lastGeminiRecommendation;
+    }
+    return 'Terjadi gangguan koneksi dengan AI. Tetap jaga ventilasi udara Anda.';
   }
 }
 
@@ -374,11 +459,14 @@ app.get('/api/status', async (req, res) => {
   }
 });
 
-app.get('/api/gemini', (req, res) => {
+app.get('/api/gemini', async (req, res) => {
   const status = req.query.status || 'AMAN';
+  const ppm = Number(req.query.ppm) || 0;
+  
+  const recommendation = await getGeminiRecommendation(status, ppm);
   res.json({
     status: status.toString().toUpperCase(),
-    recommendation: getGeminiRecommendation(status),
+    recommendation,
   });
 });
 
@@ -484,15 +572,26 @@ mqttClient.on('connect', () => {
 
 mqttClient.on('message', async (topic, messageBuffer) => {
   const message = messageBuffer.toString();
-  const payload = message;
+  
+  // Parse payload (otomatis melakukan dekripsi jika ada ciphertext)
+  const parsedPayload = buildPayloadObject(message);
 
-  const data = new DeviceData({ topic, payload });
-  await data.save().catch((error) => console.error('Failed saving MQTT message:', error));
+  // Emit data plaintext hasil dekripsi ke frontend
+  io.emit('newData', { 
+    topic, 
+    payload: JSON.stringify(parsedPayload) 
+  });
+  
+  if (parsedPayload.isEncrypted) {
+    console.log(`MQTT message received (Decrypted successfully): ${topic} ->`, parsedPayload);
+  } else {
+    console.log(`MQTT message received: ${topic} -> ${message}`);
+  }
 
-  await saveSensorReading({ topic, payload: message }).catch((error) => console.error('Failed saving sensor reading:', error));
-
-  io.emit('newData', { topic, payload: message });
-  console.log(`MQTT message received: ${topic} -> ${message}`);
+  // Simpan ke database di background
+  const data = new DeviceData({ topic, payload: JSON.stringify(parsedPayload) });
+  data.save().catch((error) => console.error('Failed saving MQTT message:', error));
+  saveSensorReading({ topic, payload: parsedPayload }).catch((error) => console.error('Failed saving sensor reading:', error));
 });
 
 mqttClient.on('error', (error) => {

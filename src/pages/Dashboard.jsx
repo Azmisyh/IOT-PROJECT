@@ -15,14 +15,7 @@ import { getGeminiRecommendation } from "../services/geminiService";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:3000";
 
-function buildFallbackHistory() {
-  return [
-    { time: "00:00", gas: 180, status: "AMAN" },
-    { time: "00:05", gas: 320, status: "WASPADA" },
-    { time: "00:10", gas: 460, status: "WASPADA" },
-    { time: "00:15", gas: 240, status: "AMAN" },
-  ];
-}
+// Tidak ada data dummy — mulai kosong, data datang dari backend/MQTT
 
 function parsePayload(payload) {
   if (typeof payload === "object" && payload !== null) {
@@ -62,11 +55,13 @@ function mapReadingToDashboard(reading) {
 export default function Dashboard() {
   const navigate = useNavigate();
 
-  const [gas, setGas] = useState(150);
-  const [status, setStatus] = useState("AMAN");
-  const [history, setHistory] = useState(buildFallbackHistory());
-  const [payload, setPayload] = useState("Belum ada payload dari backend");
+  const [gas, setGas] = useState(0);
+  const [status, setStatus] = useState("—");
+  const [history, setHistory] = useState([]);
+  const [payload, setPayload] = useState("Menunggu data dari sensor...");
   const [connectionStatus, setConnectionStatus] = useState("MENGHUBUNG...");
+
+  const [isEncrypted, setIsEncrypted] = useState(false);
 
   const [aiRecommendation, setAiRecommendation] =
     useState("Memuat rekomendasi AI...");
@@ -105,10 +100,15 @@ export default function Dashboard() {
       setGas(mapped.gas);
       setStatus(mapped.status);
       setPayload(JSON.stringify(mapped.payload, null, 2));
-      setHistory((prev) => [{ time: mapped.time, gas: mapped.gas, status: mapped.status }, ...prev.slice(0, 19)]);
+      setHistory((prev) => [{ time: mapped.time, gas: mapped.gas, status: mapped.status }, ...prev].slice(0, 50));
+      
+      // Update status enkripsi secara dinamis dari payload MQTT
+      if (mapped.payload && mapped.payload.isEncrypted) {
+        setIsEncrypted(true);
+      }
 
       setAiLoading(true);
-      const recommendation = await getGeminiRecommendation(mapped.status);
+      const recommendation = await getGeminiRecommendation(mapped.status, mapped.gas);
       setAiRecommendation(recommendation);
       setAiLoading(false);
     });
@@ -118,29 +118,33 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Load data historis dari API SEKALI saat mount, lalu real-time via Socket.IO
   useEffect(() => {
-    const loadData = async () => {
+    const loadInitialData = async () => {
       try {
         const [latestRes, historyRes] = await Promise.allSettled([
           fetch(`${API_BASE_URL}/gas-readings/latest`),
-          fetch(`${API_BASE_URL}/gas-readings?limit=20`),
+          fetch(`${API_BASE_URL}/gas-readings?limit=50`),
         ]);
-
-        const fallbackHistory = buildFallbackHistory();
-        let nextGas = fallbackHistory[fallbackHistory.length - 1].gas;
-        let nextStatus = fallbackHistory[fallbackHistory.length - 1].status;
-        let nextRecommendation = "Memuat rekomendasi AI...";
-        let nextPayload = "Belum ada payload dari backend";
-        let nextHistory = fallbackHistory;
 
         if (latestRes.status === "fulfilled" && latestRes.value.ok) {
           const latestReading = await latestRes.value.json();
           const mappedLatest = mapReadingToDashboard(latestReading);
 
-          nextGas = mappedLatest.gas;
-          nextStatus = mappedLatest.status;
-          nextRecommendation = await getGeminiRecommendation(mappedLatest.status);
-          nextPayload = JSON.stringify(mappedLatest.payload, null, 2);
+          setGas(mappedLatest.gas);
+          setStatus(mappedLatest.status);
+          setPayload(JSON.stringify(mappedLatest.payload, null, 2));
+
+          if (mappedLatest.payload && mappedLatest.payload.isEncrypted) {
+            setIsEncrypted(true);
+          }
+
+          const recommendation = await getGeminiRecommendation(mappedLatest.status, mappedLatest.gas);
+          setAiRecommendation(recommendation);
+          setAiLoading(false);
+        } else {
+          setAiRecommendation("Belum ada data sensor.");
+          setAiLoading(false);
         }
 
         if (historyRes.status === "fulfilled" && historyRes.value.ok) {
@@ -154,25 +158,18 @@ export default function Dashboard() {
             .filter((item) => Number.isFinite(item.gas));
 
           if (mappedHistory.length > 0) {
-            nextHistory = mappedHistory.slice(0, 20);
+            setHistory(mappedHistory.slice(0, 50));
           }
         }
-
-        setGas(nextGas);
-        setStatus(nextStatus);
-        setAiRecommendation(nextRecommendation);
-        setAiLoading(false);
-        setPayload(nextPayload);
-        setHistory(nextHistory);
       } catch (error) {
-        console.error("Gagal mengambil data dari backend:", error);
+        console.error("Gagal mengambil data awal dari backend:", error);
+        setAiRecommendation("Gagal terhubung ke backend.");
+        setAiLoading(false);
       }
     };
 
-    loadData();
-    const interval = setInterval(loadData, 5000);
-
-    return () => clearInterval(interval);
+    loadInitialData();
+    // Tidak ada interval — data real-time datang dari Socket.IO di useEffect atas
   }, []);
 
   return (
@@ -304,7 +301,7 @@ export default function Dashboard() {
         </div>
 
         {/* SECURITY */}
-        <SecurityStatus />
+        <SecurityStatus isEncrypted={isEncrypted} />
       </div>
 
       {/* AI GEMINI */}

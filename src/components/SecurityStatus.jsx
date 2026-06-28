@@ -1,4 +1,4 @@
-export default function SecurityStatus() {
+export default function SecurityStatus({ isEncrypted }) {
   return (
     <div
       style={{
@@ -7,20 +7,24 @@ export default function SecurityStatus() {
         backgroundColor: "white",
         padding: "20px",
         borderRadius: "10px",
+        boxShadow: "0 2px 5px rgba(0,0,0,0.1)",
       }}
     >
-      <h3>🔒 Security</h3>
+      <h3>🔒 Keamanan Data</h3>
 
       <h2
         style={{
-          color: "green",
+          color: isEncrypted ? "#22c55e" : "#eab308",
+          marginTop: "10px",
         }}
       >
-        AES-128 Aktif
+        {isEncrypted ? "AES-128-CBC Aktif" : "Menghubungkan..."}
       </h2>
 
-      <p>
-        Data MQTT terenkripsi
+      <p style={{ fontSize: "14px", color: "#6b7280", marginTop: "5px" }}>
+        {isEncrypted 
+          ? "Data MQTT didekripsi aman end-to-end." 
+          : "Menunggu enkripsi dari sensor..."}
       </p>
     </div>
   );
