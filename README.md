@@ -104,8 +104,8 @@ Sistem ini terbagi menjadi tiga komponen utama:
 *   Sesuaikan konfigurasi `ssid` dan `password` WiFi dengan jaringan Anda.
 *   Unggah kode ke papan ESP32 Anda.
 
-# **Demo Project**
-* https://github.com/user-attachments/assets/426e4262-736e-4005-8fb9-125487bc1cb7
+# **Video Demo Project**
+*   https://github.com/user-attachments/assets/426e4262-736e-4005-8fb9-125487bc1cb7
 
 
 
