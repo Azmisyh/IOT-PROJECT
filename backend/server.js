@@ -134,6 +134,20 @@ let lastGeminiStatus = null;
 let lastGeminiRecommendation = '';
 let lastGeminiCallTime = 0;
 
+function getSmartLocalRecommendation(status, ppm) {
+  const ppmVal = Number(ppm) || 0;
+  if (status === 'BAHAYA' || ppmVal >= 400) {
+    return `🚨 STATUS BAHAYA (${ppmVal} PPM)! Kebocoran gas tingkat tinggi terdeteksi. Segera matikan katup tabung gas, buka semua pintu/jendela lebar-lebar, evakuasi semua orang, dan hindari penggunaan sakelar listrik atau korek api!`;
+  } else if (status === 'WASPADA' || ppmVal >= 250) {
+    return `⚠️ STATUS WASPADA (${ppmVal} PPM)! Terdeteksi peningkatan kadar gas yang signifikan. Segera buka jendela untuk meningkatkan ventilasi udara, periksa kompor Anda, dan tetap bersiaga.`;
+  } else {
+    if (ppmVal > 100) {
+      return `ℹ️ INFORMASI (${ppmVal} PPM): Terdeteksi sedikit peningkatan gas di ruangan. Disarankan membuka sedikit jendela untuk sirkulasi udara guna menjaga kenyamanan udara.`;
+    }
+    return `🟢 KONDISI AMAN (${ppmVal} PPM): Kadar gas di ruangan sangat rendah dan aman. Tidak diperlukan tindakan darurat, sistem pemantauan berjalan normal.`;
+  }
+}
+
 async function getGeminiRecommendation(status, ppm = 0) {
   const now = Date.now();
   const statusUpper = (status || '').toString().toUpperCase();
@@ -144,15 +158,7 @@ async function getGeminiRecommendation(status, ppm = 0) {
     if (lastGeminiRecommendation) {
       return lastGeminiRecommendation;
     }
-    // Jika belum ada rekomendasi sukses, gunakan fallback lokal sesuai status
-    switch (statusUpper) {
-      case 'BAHAYA':
-        return 'Segera buka ventilasi, matikan sumber api, dan evakuasi area. (Lokal)';
-      case 'WASPADA':
-        return 'Periksa area sekitar sensor dan tingkatkan ventilasi. (Lokal)';
-      default:
-        return 'Kondisi ruangan aman dan terkendali. (Lokal)';
-    }
+    return getSmartLocalRecommendation(statusUpper, ppm);
   }
 
   // Update waktu pemanggilan terakhir agar tidak dipanggil beruntun jika error
@@ -160,21 +166,13 @@ async function getGeminiRecommendation(status, ppm = 0) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.startsWith('YOUR_') || apiKey === 'xxxxxx') {
-    // Fallback static recommendation jika API Key belum dipasang
-    switch (statusUpper) {
-      case 'BAHAYA':
-        return 'Segera buka ventilasi, matikan sumber api, dan evakuasi area. (Mock AI)';
-      case 'WASPADA':
-        return 'Periksa area sekitar sensor dan tingkatkan ventilasi. (Mock AI)';
-      default:
-        return 'Kondisi ruangan aman dan terkendali. (Mock AI)';
-    }
+    return getSmartLocalRecommendation(statusUpper, ppm);
   }
 
   try {
-    // Menggunakan v1beta karena memiliki kompatibilitas model yang lebih luas di Google AI Studio
+    // Menggunakan v1beta dan gemini-2.0-flash yang didukung oleh API key baru Anda
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: {
@@ -208,14 +206,7 @@ async function getGeminiRecommendation(status, ppm = 0) {
     if (lastGeminiRecommendation) {
       return lastGeminiRecommendation;
     }
-    switch (statusUpper) {
-      case 'BAHAYA':
-        return 'Segera buka ventilasi, matikan sumber api, dan evakuasi area. (Lokal)';
-      case 'WASPADA':
-        return 'Periksa area sekitar sensor dan tingkatkan ventilasi. (Lokal)';
-      default:
-        return 'Kondisi ruangan aman dan terkendali. (Lokal)';
-    }
+    return getSmartLocalRecommendation(statusUpper, ppm);
   }
 }
 
