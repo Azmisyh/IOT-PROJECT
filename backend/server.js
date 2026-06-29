@@ -138,11 +138,25 @@ async function getGeminiRecommendation(status, ppm = 0) {
   const now = Date.now();
   const statusUpper = (status || '').toString().toUpperCase();
 
-  // Jika status sama dengan sebelumnya DAN pemanggilan terakhir kurang dari 30 detik lalu,
-  // gunakan rekomendasi cache agar menghemat kuota API Key.
-  if (statusUpper === lastGeminiStatus && lastGeminiRecommendation && (now - lastGeminiCallTime < 30000)) {
-    return lastGeminiRecommendation;
+  // Batasi pemanggilan API maksimal sekali setiap 15 detik (baik sukses maupun gagal)
+  // untuk menghemat kuota dan mencegah spamming dari pengiriman data per detik.
+  if (lastGeminiCallTime && (now - lastGeminiCallTime < 15000)) {
+    if (lastGeminiRecommendation) {
+      return lastGeminiRecommendation;
+    }
+    // Jika belum ada rekomendasi sukses, gunakan fallback lokal sesuai status
+    switch (statusUpper) {
+      case 'BAHAYA':
+        return 'Segera buka ventilasi, matikan sumber api, dan evakuasi area. (Lokal)';
+      case 'WASPADA':
+        return 'Periksa area sekitar sensor dan tingkatkan ventilasi. (Lokal)';
+      default:
+        return 'Kondisi ruangan aman dan terkendali. (Lokal)';
+    }
   }
+
+  // Update waktu pemanggilan terakhir agar tidak dipanggil beruntun jika error
+  lastGeminiCallTime = now;
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.startsWith('YOUR_') || apiKey === 'xxxxxx') {
@@ -158,8 +172,9 @@ async function getGeminiRecommendation(status, ppm = 0) {
   }
 
   try {
+    // Menggunakan v1beta karena memiliki kompatibilitas model yang lebih luas di Google AI Studio
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: {
@@ -184,20 +199,26 @@ async function getGeminiRecommendation(status, ppm = 0) {
       const recText = data.candidates[0].content.parts[0].text.trim();
       lastGeminiStatus = statusUpper;
       lastGeminiRecommendation = recText;
-      lastGeminiCallTime = now;
       return recText;
     }
     console.error('[Gemini API Raw Response]', JSON.stringify(data));
     throw new Error('Respons struktur Gemini API tidak valid');
   } catch (error) {
     console.error('[Gemini API Error]', error.message);
-    // Jika limit tercapai (429) dan ada cache lama, gunakan cache lama
     if (lastGeminiRecommendation) {
       return lastGeminiRecommendation;
     }
-    return 'Terjadi gangguan koneksi dengan AI. Tetap jaga ventilasi udara Anda.';
+    switch (statusUpper) {
+      case 'BAHAYA':
+        return 'Segera buka ventilasi, matikan sumber api, dan evakuasi area. (Lokal)';
+      case 'WASPADA':
+        return 'Periksa area sekitar sensor dan tingkatkan ventilasi. (Lokal)';
+      default:
+        return 'Kondisi ruangan aman dan terkendali. (Lokal)';
+    }
   }
 }
+
 
 async function saveSensorReading({ topic, payload, deviceId = null, deviceName = '' }) {
   const parsedPayload = buildPayloadObject(payload);

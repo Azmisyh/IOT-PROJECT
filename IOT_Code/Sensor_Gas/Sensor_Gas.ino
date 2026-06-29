@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#define MQTT_MAX_PACKET_SIZE 512
 #include <PubSubClient.h>
 #include <time.h>
 #include "mbedtls/aes.h"
@@ -17,7 +18,7 @@ const char* aes_key = "1234567890123456"; // 16 bytes key
 const char* aes_iv  = "1234567890123456"; // 16 bytes IV
 
 // ==================== KONFIGURASI PIN ====================
-const int PIN_MQ2 = 36;      // Sensor MQ-2 (analog input)
+const int PIN_MQ2 = 35;      // Sensor MQ-2 (analog input)
 const int PIN_BUZZER = 25;    // Buzzer output
 
 // ==================== THRESHOLD GAS (PPM) ====================
@@ -214,18 +215,12 @@ void publishSensorData() {
   char timeString[32];
   strftime(timeString, sizeof(timeString), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
 
-  // Bangun JSON plaintext data mentah lengkap
+  // Bangun JSON plaintext yang ringkas agar ukuran paket di bawah 128 byte
   String plaintextPayload = "{";
   plaintextPayload += "\"raw\":" + String(raw);
-  plaintextPayload += ",\"voltage\":" + String(voltage, 3);
   plaintextPayload += ",\"ppm\":" + String(ppm, 2);
   plaintextPayload += ",\"status\":\"" + String(status) + "\"";
   plaintextPayload += ",\"alarm\":" + String(alarmActive ? "true" : "false");
-  plaintextPayload += ",\"buzzerMuted\":" + String(buzzerMuted ? "true" : "false");
-  plaintextPayload += ",\"buzzerActive\":" + String(buzzerIsActive ? "true" : "false");
-  plaintextPayload += ",\"threshold_warning\":" + String((int)GAS_THRESHOLD);
-  plaintextPayload += ",\"threshold_danger\":" + String((int)DANGER_THRESHOLD);
-  plaintextPayload += ",\"timestamp\":\"" + String(timeString) + "\"";
   plaintextPayload += "}";
 
   // Enkripsi payload plaintext dengan AES-128-CBC
